@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "COSMOS_URI": "https://your-cosmos.documents.azure.com:443/",
+    "COSMOS_KEY": "your-cosmos-key",
+    "COSMOS_DB": "askai",
+    "COSMOS_CONTAINER": "questions",
+    "AOAI_ENDPOINT": "https://your-openai.openai.azure.com/",
+    "AOAI_KEY": "your-openai-key",
+    "MODEL_NAME": "gpt-4o",
+    "SIGNALR_CONNECTION_STRING": "Endpoint=https://your-signalr.service.signalr.net;AccessKey=...;Version=1.0;",
+    "CONTENT_SAFETY_ENDPOINT": "https://your-content-safety.cognitiveservices.azure.com/",
+    "CONTENT_SAFETY_KEY": "your-content-safety-key",
+    "APPINSIGHTS_INSTRUMENTATIONKEY": "your-app-insights-key"
+  }
+}
+
