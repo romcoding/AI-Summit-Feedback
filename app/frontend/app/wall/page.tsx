@@ -1,3 +1,12 @@
+/*
+ * Updated Wall Page for AI Summit Feedback.
+ *
+ * This version negotiates a SignalR connection via the backend instead of using a
+ * pre-configured URL. It subscribes to question creation, answer, and hide
+ * events from the server and updates the UI accordingly. Real-time updates
+ * occur through the SignalR connection, with a backup refresh interval.
+ */
+
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
@@ -22,27 +31,35 @@ export default function WallPage() {
   const [connection, setConnection] = useState<signalR.HubConnection | null>(null)
   const highlightedTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Load initial data and connect to SignalR on mount or when sessionId changes
   useEffect(() => {
     loadQuestions()
 
-    const hubConnection = new signalR.HubConnectionBuilder()
-      .withUrl(`${process.env.NEXT_PUBLIC_SIGNALR_URL}/api`)
-      .withAutomaticReconnect()
-      .build()
+    let currentConnection: signalR.HubConnection | null = null
 
-    hubConnection.start()
-      .then(() => {
-        hubConnection.invoke('JoinSession', sessionId)
-        
-        hubConnection.on('questionCreated', (data: Question) => {
+    const connectSignalR = async () => {
+      try {
+        // Request a SignalR connection from the backend
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/negotiate`)
+        if (!res.ok) {
+          throw new Error('Failed to negotiate SignalR connection')
+        }
+        const { url, accessToken } = await res.json()
+        const conn = new signalR.HubConnectionBuilder()
+          .withUrl(url, { accessTokenFactory: () => accessToken })
+          .withAutomaticReconnect()
+          .build()
+
+        await conn.start()
+
+        // Listen for questions being created
+        conn.on('questionCreated', (data: Question) => {
           setQuestions((prev) => [data, ...prev])
         })
 
-        hubConnection.on('questionAnswered', (data: Question) => {
-          setQuestions((prev) =>
-            prev.map((q) => (q.id === data.id ? data : q))
-          )
-          // Highlight for 10 seconds
+        // Listen for answers
+        conn.on('questionAnswered', (data: Question) => {
+          setQuestions((prev) => prev.map((q) => (q.id === data.id ? data : q)))
           setHighlightedId(data.id)
           if (highlightedTimeoutRef.current) {
             clearTimeout(highlightedTimeoutRef.current)
@@ -52,15 +69,21 @@ export default function WallPage() {
           }, 10000)
         })
 
-        hubConnection.on('questionHidden', (data: { id: string }) => {
+        // Listen for questions being hidden
+        conn.on('questionHidden', (data: { id: string }) => {
           setQuestions((prev) => prev.filter((q) => q.id !== data.id))
         })
-      })
-      .catch(console.error)
 
-    setConnection(hubConnection)
+        currentConnection = conn
+        setConnection(conn)
+      } catch (err) {
+        console.error('SignalR connection error:', err)
+      }
+    }
 
-    // Refresh every 30 seconds as backup
+    connectSignalR()
+
+    // Periodically reload questions as a backup
     const interval = setInterval(loadQuestions, 30000)
 
     return () => {
@@ -68,10 +91,13 @@ export default function WallPage() {
       if (highlightedTimeoutRef.current) {
         clearTimeout(highlightedTimeoutRef.current)
       }
-      hubConnection.stop()
+      if (currentConnection) {
+        currentConnection.stop()
+      }
     }
   }, [sessionId])
 
+  // Fetch questions for the current session
   const loadQuestions = async () => {
     try {
       const response = await fetch(
@@ -86,6 +112,7 @@ export default function WallPage() {
     }
   }
 
+  // Admin-only handler to hide a question
   const handleHide = async (id: string) => {
     if (!isAdmin) return
     try {
@@ -117,7 +144,9 @@ export default function WallPage() {
           </div>
           {Object.keys(industryCounts).length > 0 && (
             <div className="mt-2 text-sm text-gray-400">
-              Industries: {Object.entries(industryCounts).map(([ind, count]) => `${ind} (${count})`).join(', ')}
+              Industries: {Object.entries(industryCounts)
+                .map(([ind, count]) => `${ind} (${count})`)
+                .join(', ')}
             </div>
           )}
         </header>
@@ -204,4 +233,3 @@ export default function WallPage() {
     </div>
   )
 }
-

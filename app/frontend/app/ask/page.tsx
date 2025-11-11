@@ -1,6 +1,16 @@
+/*
+ * Updated Ask Page for AI Summit Feedback.
+ *
+ * This version removes the direct dependency on NEXT_PUBLIC_SIGNALR_URL and instead
+ * negotiates a SignalR connection via the Azure Functions negotiate endpoint.
+ * It loads or generates an author token, loads existing questions for this
+ * author, and subscribes to the `questionAnswered` event via SignalR. When
+ * an answer arrives for the current author, it reloads the user's questions.
+ */
+
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import * as signalR from '@microsoft/signalr'
 import { ULID } from 'ulid'
@@ -36,41 +46,61 @@ export default function AskPage() {
   const [myQuestions, setMyQuestions] = useState<Question[]>([])
   const [connection, setConnection] = useState<signalR.HubConnection | null>(null)
 
+  // Initialize author token, load existing questions, and establish SignalR connection
   useEffect(() => {
-    // Get or create author token
+    // Generate or retrieve a persistent author token
     let token = localStorage.getItem('authorToken')
     if (!token) {
       token = ULID.generate().toLowerCase()
       localStorage.setItem('authorToken', token)
     }
-    setAuthorToken(token)
+    // Persist the token in state
+    setAuthorToken(token as string)
+    // Load questions already asked by this author
+    loadMyQuestions(token as string)
 
-    // Load my questions
-    loadMyQuestions(token)
+    let currentConnection: signalR.HubConnection | null = null
 
-    // Setup SignalR connection
-    const hubConnection = new signalR.HubConnectionBuilder()
-      .withUrl(`${process.env.NEXT_PUBLIC_SIGNALR_URL}/api`)
-      .withAutomaticReconnect()
-      .build()
+    const connectSignalR = async () => {
+      try {
+        // Ask the backend for connection information. Include userId for personalized answers.
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/negotiate?userId=${token}`)
+        if (!res.ok) {
+          throw new Error('Failed to negotiate SignalR connection')
+        }
+        const { url, accessToken } = await res.json()
+        const conn = new signalR.HubConnectionBuilder()
+          .withUrl(url, { accessTokenFactory: () => accessToken })
+          .withAutomaticReconnect()
+          .build()
 
-    hubConnection.start()
-      .then(() => {
-        hubConnection.on('questionAnswered', (data: { id: string; answer: string; authorToken: string }) => {
+        await conn.start()
+        // Listen for answers targeting this author token
+        conn.on('questionAnswered', (data: { id: string; answer: string; authorToken: string }) => {
           if (data.authorToken === token) {
-            loadMyQuestions(token)
+            loadMyQuestions(token as string)
           }
         })
-      })
-      .catch(console.error)
 
-    setConnection(hubConnection)
+        currentConnection = conn
+        setConnection(conn)
+      } catch (err) {
+        console.error('SignalR connection error:', err)
+      }
+    }
+
+    connectSignalR()
 
     return () => {
-      hubConnection.stop()
+      if (currentConnection) {
+        currentConnection.stop()
+      }
     }
+    // We intentionally exclude dependencies to run this effect only once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Fetch questions submitted by this author
   const loadMyQuestions = async (token: string) => {
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/my/${token}`)
@@ -83,6 +113,7 @@ export default function AskPage() {
     }
   }
 
+  // Submit a new question to the API
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!question.trim() || !industry) return
@@ -102,12 +133,12 @@ export default function AskPage() {
       })
 
       if (response.ok) {
-        const data = await response.json()
+        // Reset form fields
         setQuestion('')
         setIndustry('')
         setEmail('')
-        // Reload questions
-        setTimeout(() => loadMyQuestions(authorToken), 1000)
+        // Give the backend a moment to process before reloading
+        setTimeout(() => loadMyQuestions(authorToken), 500)
       } else {
         alert('Failed to submit question. Please try again.')
       }
@@ -242,4 +273,3 @@ export default function AskPage() {
     </div>
   )
 }
-
